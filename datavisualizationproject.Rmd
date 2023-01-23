@@ -1,0 +1,175 @@
+---
+title: 'Visualització de dades: Pràctica final'
+author: "Autor: Pere Moles Seró"
+date: "Gener 2023"
+output:
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+    includes:
+      in_header: 05.584-PAC-header.html
+  word_document: default
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Presentació del cas
+
+
+
+El blanqueig dels coralls es produeix quan els corals perden els seus colors vibrants i es tornen blancs. Però hi ha molt més que això. Els coralls són brillants i colorits a causa de les algues microscòpiques anomenades zooxantelles. Les zooxantelles viuen dins del corall en una relació mútuament beneficiosa, cadascuna ajudant a sobreviure l'altra. Però quan l'entorn oceànic canvia, si fa massa calor, per exemple, el corall s'estressa i expulsa les algues. A mesura que les algues surten, el corall s'esvaeix fins que sembla que s'ha blanquejat. Si la temperatura es manté alta, el corall no deixarà tornar les algues i el corall morirà.
+
+La principal causa del blanqueig del corall és el canvi climàtic. Un planeta que s'escalfa significa un oceà que s'escalfa, i un canvi en la temperatura de l'aigua, tan sols 2 graus Fahrenheit, pot provocar que el corall expulsi les algues. El corall es pot blanquejar per altres motius, com ara marees extremadament baixes, contaminació o massa llum solar.
+
+El blanqueig dels coralls és important perquè un cop moren aquests coralls, els esculls rarament tornen. Amb pocs corals que sobreviuen, lluiten per reproduir-se, i ecosistemes d'esculls sencers, dels quals depenen les persones i la vida salvatge, es deterioren.
+
+El blanqueig també importa perquè no és un fenomen aïllat. Segons l'Associació Nacional Oceànica i Atmosfèrica, entre el 2014 i el 2017 al voltant del 75% dels esculls de corall tropicals del món van experimentar un estrès per calor prou greu com per provocar el blanqueig. Per al 30% dels esculls del món, aquest estrès per calor va ser suficient per matar el corall.
+
+# Objectiu analític
+
+En aquest projecte utilitzarem dades extrates del "Harvard database" https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/KUVQKY
+
+La descripció del dataset és la següent:
+
+"An initial database of bleaching observations was compiled by UNEP-WCMC using a variety of sources. This database has been expanded by Dr. J. Oliver, Mr. Y. Yusuf and Ms. Nurulhuda Ahmad Fatan from WorldFish, using information from the ReefBase database, the Great Barrier Reef Marine Park Authority (GBRMPA), the CoralList, and other sources of information. This dataset also includes observations indicating no bleaching"
+
+És interessant que aquest dataset també té informació d'esdeveniments on no es va produir blanqueig del corall.
+
+# Descripció del dataset
+
+Primer de tot carreguem el dataset. Està en format xlsx.
+
+```{r}
+library("readxl")
+
+```
+
+```{r}
+coral_data <- read_excel("/home/peremoles/Baixades/CoralBleaching.xlsx")
+
+```
+
+Ens trobem davant d'un dataset complex i extens.
+
+```{r}
+summary(coral_data)
+```
+
+
+Cada esdeveniment de blanqueig té un ID Propi.
+
+Variables geogràfiques:
+
+Tenim la regió, subregió, país, ubicació i coordenades, tant latitud com longitud.
+
+Variables temporals:
+
+Tenim el dia, el mes i l'any.
+
+Variables físiques de l'ocèa:
+
+Tenim la profunditat i la temperatura de l'aigua. És una llàstima perque altres variables com la salinitat o el pH es mencionen en other_factors o remarks però no se'n facilita l'anàlisi.
+
+Variables taxonòmiques sobre el coral:
+
+Tenim les espècies i la família.
+
+Variables categòriques sobre el blanqueig:
+
+La severitat, mortalitat, àrea afectada, duració...
+
+
+# Neteja de les dades
+
+
+
+Observem que caldrà netejar bastant les dades. Ens interessarà sobretot corregir depth i water temperature.
+
+
+
+## Neteja de la variable depth
+
+Per exemple, alguns valors com depth en alguns casos contenen la lletra m, meter o metre
+```{r}
+coral_data$DEPTH <- sub("metre","",coral_data$DEPTH)
+coral_data$DEPTH <- sub("meter","",coral_data$DEPTH)
+coral_data$DEPTH <- sub("m","",coral_data$DEPTH)
+```
+
+Observem que alguns valors de depth es troben en intervals. Dividim en dues columnes
+
+```{r}
+library(stringr)
+
+coral_data[c('Minimum depth', 'Maximum depth')] <- str_split_fixed(coral_data$DEPTH, "[to-]",2)
+
+```
+
+Alguns registres estan mesurats amb feet, els passem a metres.
+
+```{r}
+coral_data$mincorrected <- ifelse((grepl('ft', coral_data$`Minimum depth`, fixed = TRUE)|grepl('feet', coral_data$`Minimum depth`, fixed = TRUE))==TRUE,as.numeric(sub("ft","",coral_data$`Minimum depth`))*0.3048,coral_data$`Minimum depth`)
+coral_data$maxcorrected <- ifelse((grepl('ft', coral_data$`Maximum depth`, fixed = TRUE)|grepl('feet', coral_data$`Maximum depth`, fixed = TRUE))==TRUE,as.numeric(sub("ft","",coral_data$`Maximum depth`))*0.3048,coral_data$`Maximum depth`)
+coral_data <- coral_data[,!names(coral_data) %in% c("Minimum depth", "Maximum depth")]
+
+```
+Canviem el format de les variables a numèriques. És possible que alguns casos no estiguin contemplats (com algunes mesures que eren strings), que passaran a ser NAs.
+```{r}
+coral_data$mincorrected <- as.numeric(coral_data$mincorrected)
+coral_data$maxcorrected <- as.numeric(coral_data$maxcorrected)
+```
+En els casos que teniem un interval ens quedem amb la mitjana
+```{r}
+coral_data$averagedepth <- ifelse(is.na(coral_data$maxcorrected), coral_data$mincorrected, (coral_data$mincorrected + coral_data$maxcorrected)/2)
+
+```
+
+## Neteja de la variable temperatura
+
+En aquest cas ens trobem un cas complex. En alguns casos la temperatura es barreja també amb la temperatura de l'aire, trobem errors tipogràfics, els graus en diferents formats... Ens veiem obligats a ajudar-nos amb expressions regulars però tot i així no som exhaustius del tot.
+
+```{r}
+
+
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('Air',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('^([^W]*?)Water temp ([0-9]*).*','\\2',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('Air',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('^([^W]*?)Water temperature ([0-9]*).*','\\2',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('Air',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('^([^w]*?)water temp ([0-9]*).*','\\2',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('Air',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('^([^W]*?)water temperature ([0-9]*).*','\\2',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+
+
+
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('ater temp',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('[W,w]ater temp ([0-9]*)(\\.[0-9]*).*','\\1\\2',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE) 
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('ater temp',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('[W,w]ater temp ([0-9]*).*','\\1',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+
+coral_data$WATER_TEMPERATURE <- ifelse(grepl('ater temp',coral_data$WATER_TEMPERATURE,fixed =TRUE)==TRUE,sub('[W,w]ater temperature ([0-9]*).*','\\1',coral_data$WATER_TEMPERATURE), coral_data$WATER_TEMPERATURE)
+
+coral_data$WATER_TEMPERATURE <- sub('[C,c]','',coral_data$WATER_TEMPERATURE)
+coral_data$WATER_TEMPERATURE <- sub('º','',coral_data$WATER_TEMPERATURE)
+coral_data$WATER_TEMPERATURE <- sub('[D,d][E,e][G,g]','',coral_data$WATER_TEMPERATURE)
+
+coral_data$WATER_TEMPERATURE <- sub('([0-9][0-9]) in.*','\\',coral_data$WATER_TEMPERATURE)
+coral_data$WATER_TEMPERATURE <- as.numeric(coral_data$WATER_TEMPERATURE)
+
+
+table(coral_data$WATER_TEMPERATURE)
+```
+
+
+Finalment, totes descartarem totes les dades on no hem netejat la temperatura.
+
+```{r}
+df <- coral_data[!is.na(coral_data$WATER_TEMPERATURE),]
+
+```
+
